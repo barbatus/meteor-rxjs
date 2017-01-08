@@ -1,18 +1,20 @@
 'use strict';
 
 import {Observable, Subscriber, Subject} from 'rxjs';
-import {gZone, forkZone, removeObserver} from './utils';
+import {removeObserver, g} from './utils';
+import {forkRxJsZone} from './zone';
 
-declare let _;
+declare const _;
 
 export class ObservableCursor<T> extends Observable<T[]> {
-  private _zone: Zone;
+  private _zone: Zone = forkRxJsZone();
   private _data: Array <T> = [];
   private _cursor: Mongo.Cursor<T>;
   private _hCursor: Meteor.LiveQueryHandle;
   private _observers: Subscriber<T[]>[] = [];
   private _countObserver: Subject<number> = new Subject<number>();
-  private _isDataInitinialized = false;
+  private _handleChangeDebounced: Function;
+  private _init = false;
 
   /**
    *  Static method which creates an ObservableCursor from Mongo.Cursor.
@@ -34,13 +36,13 @@ export class ObservableCursor<T> extends Observable<T[]> {
    */
   constructor(cursor: Mongo.Cursor<T>) {
     super((observer: Subscriber<T[]>) => {
-      if (this._isDataInitinialized) {
+      if (this._init) {
         observer.next(this._data);
       }
 
       this._observers.push(observer);
 
-      if (!this._hCursor) {
+      if (! this._hCursor) {
         this._hCursor = this._observeCursor(cursor);
       }
 
@@ -53,7 +55,10 @@ export class ObservableCursor<T> extends Observable<T[]> {
     _.extend(this, _.omit(cursor, 'count', 'map'));
 
     this._cursor = cursor;
-    this._zone = forkZone();
+    this._handleChangeDebounced = _.debounce(() => {
+      this._handleChange();
+      this._init = true;
+    }, 0);
   }
 
   /**
@@ -145,41 +150,65 @@ export class ObservableCursor<T> extends Observable<T[]> {
   }
 
   _addedAt(doc, at, before) {
+    doc = this._zoneObservables(doc);
     this._data.splice(at, 0, doc);
+    if (! this._init) {
+      return this._handleChangeDebounced();
+    }
     this._handleChange();
   }
 
   _changedAt(doc, old, at) {
     this._data[at] = doc;
     this._handleChange();
-  };
+  }
 
   _removedAt(doc, at) {
     this._data.splice(at, 1);
     this._handleChange();
-  };
+  }
 
   _movedTo(doc, fromIndex, toIndex) {
     this._data.splice(fromIndex, 1);
     this._data.splice(toIndex, 0, doc);
     this._handleChange();
-  };
+  }
 
   _handleChange() {
-    this._isDataInitinialized = true;
+    this._runNext(this._data);
+  }
 
-    this._zone.run(() => {
-      this._runNext(this._data);
-    });
-  };
+  _zoneObservables(doc) {
+    if (! doc) { return doc; }
+
+    const proto = Object.getPrototypeOf(doc) || {};
+    const props = [].concat(
+      Object.keys(doc),
+      Object.keys(proto),
+    );
+
+    for (const prop of props) {
+      const value = doc[prop];
+      if (value instanceof Observable) {
+        Object.defineProperty(doc, prop, {
+          configurable: true,
+          enumerable: true,
+          value: value.zone.call(value, this._zone),
+        });
+      }
+    }
+
+    return doc;
+  }
 
   _observeCursor(cursor: Mongo.Cursor<T>) {
-    return gZone.run(
+    return this._zone.run<Meteor.LiveQueryHandle>(
       () => cursor.observe({
         addedAt: this._addedAt.bind(this),
         changedAt: this._changedAt.bind(this),
         movedTo: this._movedTo.bind(this),
         removedAt: this._removedAt.bind(this)
-      }));
+      })
+    );
   }
 }

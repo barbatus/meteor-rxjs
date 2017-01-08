@@ -1,6 +1,7 @@
 'use strict';
 import { Observable } from 'rxjs';
-import { isMeteorCallbacks, forkZone, removeObserver } from './utils';
+import { isMeteorCallbacks, removeObserver } from './utils';
+import { forkRxJsZone } from './zone';
 function throwInvalidCallback(method) {
     throw new Error("Invalid " + method + " arguments:\n     your last param can't be a callback function, \n     please remove it and use \".subscribe\" of the Observable!");
 }
@@ -14,7 +15,7 @@ function throwInvalidCallback(method) {
  * [Meteor.autorun](https://docs.meteor.com/api/tracker.html#Tracker-autorun)
  * and [Meteor.subscribe](https://docs.meteor.com/api/pubsub.html#Meteor-subscribe).
  */
-var MeteorObservable = (function () {
+export var MeteorObservable = (function () {
     function MeteorObservable() {
     }
     /**
@@ -56,7 +57,7 @@ var MeteorObservable = (function () {
         if (isMeteorCallbacks(lastParam)) {
             throwInvalidCallback('MeteorObservable.call');
         }
-        var zone = forkZone();
+        var zone = forkRxJsZone();
         return Observable.create(function (observer) {
             Meteor.call.apply(Meteor, [name].concat(args.concat([
                 function (error, result) {
@@ -134,7 +135,7 @@ var MeteorObservable = (function () {
         if (isMeteorCallbacks(lastParam)) {
             throwInvalidCallback('MeteorObservable.subscribe');
         }
-        var zone = forkZone();
+        var zone = forkRxJsZone();
         var observers = [];
         var subscribe = function () {
             return Meteor.subscribe.apply(Meteor, [name].concat(args.concat([{
@@ -186,7 +187,7 @@ var MeteorObservable = (function () {
      *  }
      */
     MeteorObservable.autorun = function () {
-        var zone = forkZone();
+        var zone = forkRxJsZone();
         var observers = [];
         var autorun = function () {
             return Tracker.autorun(function (computation) {
@@ -209,5 +210,4 @@ var MeteorObservable = (function () {
     };
     return MeteorObservable;
 }());
-export { MeteorObservable };
 //# sourceMappingURL=MeteorObservable.js.map

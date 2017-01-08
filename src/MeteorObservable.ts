@@ -1,7 +1,8 @@
 'use strict';
 
 import {Observable, Subscriber} from 'rxjs';
-import {isMeteorCallbacks, forkZone, removeObserver} from './utils';
+import {isMeteorCallbacks, removeObserver} from './utils';
+import {forkRxJsZone} from './zone';
 
 function throwInvalidCallback(method: string) {
   throw new Error(
@@ -59,7 +60,7 @@ export class MeteorObservable {
       throwInvalidCallback('MeteorObservable.call');
     }
 
-    let zone = forkZone();
+    let zone = forkRxJsZone();
 
     return Observable.create((observer: Subscriber<Meteor.Error | T>) => {
       Meteor.call(name, ...args.concat([
@@ -137,7 +138,7 @@ export class MeteorObservable {
       throwInvalidCallback('MeteorObservable.subscribe');
     }
 
-    let zone = forkZone();
+    let zone = forkRxJsZone();
     let observers = [];
     let subscribe = () => {
       return Meteor.subscribe(name, ...args.concat([{
@@ -192,7 +193,7 @@ export class MeteorObservable {
    *  }
    */
   public static autorun(): Observable<Tracker.Computation> {
-    let zone = forkZone();
+    let zone = forkRxJsZone();
     let observers = [];
     let autorun = () => {
       return Tracker.autorun((computation: Tracker.Computation) => {

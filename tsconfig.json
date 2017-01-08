@@ -15,7 +15,7 @@
     "types": [
       "zone.js",
       "@types/chai",
-      "@types/meteor",
+      "meteor-typings",
       "@types/underscore"
     ]
   },

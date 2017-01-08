@@ -4,10 +4,54 @@ import {Observable, Operator, Subscriber} from 'rxjs';
 
 import {TeardownLogic} from 'rxjs/Subscription';
 
-import {getZone} from './utils';
+import {g} from './utils';
+
+const METEOR_RXJS_ZONE = 'meteor-rxjs-zone';
+
+const fakeZone = {
+  name: METEOR_RXJS_ZONE,
+  parent: null,
+  run(func: Function) {
+    return func();
+  },
+  fork(spec: any) {
+    return fakeZone;
+  },
+  get(key: string): any {
+    return null;
+  }
+};
+
+export function forkRxJsZone() {
+  const zone = getParentZone() || fakeZone;
+  return zone.fork({
+    name: METEOR_RXJS_ZONE,
+    properties: <any>{'isAngularZone': false},
+  });
+}
+
+function getParentZone(zone?: Zone) {
+  zone = zone || (g.Zone && g.Zone.current);
+  if (zone && (zone.name === METEOR_RXJS_ZONE)) {
+    return zone.parent;
+  }
+  return zone;
+}
+
+declare const _;
+
+const zoneRunners = new Map();
+function runZone(zone: Zone) {
+  if (! zoneRunners.get(zone)) {
+    const runner = _.debounce(run => run(), 30);
+    zoneRunners.set(zone, runner);
+  }
+  const runner = zoneRunners.get(zone);
+  runner(zone.run.bind(zone, () => {}));
+}
 
 export function zone<T>(zone?: Zone): Observable<T> {
-  return this.lift(new ZoneOperator(zone || getZone()));
+  return this.lift(new ZoneOperator(zone || getParentZone()));
 }
 
 class ZoneOperator<T> implements Operator<T, T> {
@@ -25,21 +69,21 @@ class ZoneSubscriber<T> extends Subscriber<T> {
   }
 
   protected _next(value: T) {
-    this.zone.run(() => {
-      this.destination.next(value);
-    });
+    const zone = getParentZone(this.zone);
+    this.zone.run(() => this.destination.next(value));
+    runZone(zone);
   }
 
   protected _complete() {
-    this.zone.run(() => {
-      this.destination.complete();
-    });
+    const zone = getParentZone(this.zone);
+    this.zone.run(() => this.destination.complete());
+    runZone(zone);
   }
 
   protected _error(err?: any) {
-    this.zone.run(() => {
-      this.destination.error(err);
-    });
+    const zone = getParentZone(this.zone);
+    this.zone.run(() => this.destination.error(err));
+    runZone(zone);
   }
 }
 

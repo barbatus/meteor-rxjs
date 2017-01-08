@@ -1,4 +1,5 @@
-/// <reference types="@types/meteor" />
+/// <reference types="meteor-typings" />
+/// <reference types="@types/chai" />
 import { Observable } from 'rxjs';
 export declare class ObservableCursor<T> extends Observable<T[]> {
     private _zone;
@@ -7,7 +8,8 @@ export declare class ObservableCursor<T> extends Observable<T[]> {
     private _hCursor;
     private _observers;
     private _countObserver;
-    private _isDataInitinialized;
+    private _handleChangeDebounced;
+    private _init;
     /**
      *  Static method which creates an ObservableCursor from Mongo.Cursor.
      *  Use this to create an ObservableCursor object from an existing Mongo.Cursor.
@@ -67,10 +69,11 @@ export declare class ObservableCursor<T> extends Observable<T[]> {
     observeChanges(callbacks: Object): Meteor.LiveQueryHandle;
     _runComplete(): void;
     _runNext(data: Array<T>): void;
-    _addedAt(doc: any, at: any, before: any): void;
+    _addedAt(doc: any, at: any, before: any): any;
     _changedAt(doc: any, old: any, at: any): void;
     _removedAt(doc: any, at: any): void;
     _movedTo(doc: any, fromIndex: any, toIndex: any): void;
     _handleChange(): void;
-    _observeCursor(cursor: Mongo.Cursor<T>): any;
+    _zoneObservables(doc: any): any;
+    _observeCursor(cursor: Mongo.Cursor<T>): Meteor.LiveQueryHandle;
 }

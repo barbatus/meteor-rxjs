@@ -5,8 +5,9 @@ var __extends = (this && this.__extends) || function (d, b) {
     d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
 };
 import { Observable, Subject } from 'rxjs';
-import { gZone, forkZone, removeObserver } from './utils';
-var ObservableCursor = (function (_super) {
+import { removeObserver } from './utils';
+import { forkRxJsZone } from './zone';
+export var ObservableCursor = (function (_super) {
     __extends(ObservableCursor, _super);
     /**
      * @constructor
@@ -14,8 +15,9 @@ var ObservableCursor = (function (_super) {
      * @param {Mongo.Cursor<T>} cursor - The Mongo.Cursor to wrap.
      */
     function ObservableCursor(cursor) {
-        var _this = _super.call(this, function (observer) {
-            if (_this._isDataInitinialized) {
+        var _this = this;
+        _super.call(this, function (observer) {
+            if (_this._init) {
                 observer.next(_this._data);
             }
             _this._observers.push(observer);
@@ -25,15 +27,18 @@ var ObservableCursor = (function (_super) {
             return function () {
                 removeObserver(_this._observers, observer, function () { return _this.stop(); });
             };
-        }) || this;
-        _this._data = [];
-        _this._observers = [];
-        _this._countObserver = new Subject();
-        _this._isDataInitinialized = false;
-        _.extend(_this, _.omit(cursor, 'count', 'map'));
-        _this._cursor = cursor;
-        _this._zone = forkZone();
-        return _this;
+        });
+        this._zone = forkRxJsZone();
+        this._data = [];
+        this._observers = [];
+        this._countObserver = new Subject();
+        this._init = false;
+        _.extend(this, _.omit(cursor, 'count', 'map'));
+        this._cursor = cursor;
+        this._handleChangeDebounced = _.debounce(function () {
+            _this._handleChange();
+            _this._init = true;
+        }, 0);
     }
     /**
      *  Static method which creates an ObservableCursor from Mongo.Cursor.
@@ -128,36 +133,51 @@ var ObservableCursor = (function (_super) {
         });
     };
     ObservableCursor.prototype._addedAt = function (doc, at, before) {
+        doc = this._zoneObservables(doc);
         this._data.splice(at, 0, doc);
+        if (!this._init) {
+            return this._handleChangeDebounced();
+        }
         this._handleChange();
     };
     ObservableCursor.prototype._changedAt = function (doc, old, at) {
         this._data[at] = doc;
         this._handleChange();
     };
-    ;
     ObservableCursor.prototype._removedAt = function (doc, at) {
         this._data.splice(at, 1);
         this._handleChange();
     };
-    ;
     ObservableCursor.prototype._movedTo = function (doc, fromIndex, toIndex) {
         this._data.splice(fromIndex, 1);
         this._data.splice(toIndex, 0, doc);
         this._handleChange();
     };
-    ;
     ObservableCursor.prototype._handleChange = function () {
-        var _this = this;
-        this._isDataInitinialized = true;
-        this._zone.run(function () {
-            _this._runNext(_this._data);
-        });
+        this._runNext(this._data);
     };
-    ;
+    ObservableCursor.prototype._zoneObservables = function (doc) {
+        if (!doc) {
+            return doc;
+        }
+        var proto = Object.getPrototypeOf(doc) || {};
+        var props = [].concat(Object.keys(doc), Object.keys(proto));
+        for (var _i = 0, props_1 = props; _i < props_1.length; _i++) {
+            var prop = props_1[_i];
+            var value = doc[prop];
+            if (value instanceof Observable) {
+                Object.defineProperty(doc, prop, {
+                    configurable: true,
+                    enumerable: true,
+                    value: value.zone.call(value, this._zone),
+                });
+            }
+        }
+        return doc;
+    };
     ObservableCursor.prototype._observeCursor = function (cursor) {
         var _this = this;
-        return gZone.run(function () { return cursor.observe({
+        return this._zone.run(function () { return cursor.observe({
             addedAt: _this._addedAt.bind(_this),
             changedAt: _this._changedAt.bind(_this),
             movedTo: _this._movedTo.bind(_this),
@@ -166,5 +186,4 @@ var ObservableCursor = (function (_super) {
     };
     return ObservableCursor;
 }(Observable));
-export { ObservableCursor };
 //# sourceMappingURL=ObservableCursor.js.map

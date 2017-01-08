@@ -18,35 +18,6 @@ function isCallbacksObject(callbacks) {
 var g = typeof global === 'object' ? global :
     typeof window === 'object' ? window :
         typeof self === 'object' ? self : undefined;
-var METEOR_RXJS_ZONE = 'meteor-rxjs-zone';
-var fakeZone = {
-    name: METEOR_RXJS_ZONE,
-    run: function (func) {
-        return func();
-    },
-    fork: function (spec) {
-        return fakeZone;
-    }
-};
-function forkZone() {
-    if (g.Zone) {
-        var zone = g.Zone.current;
-        if (zone.name === METEOR_RXJS_ZONE) {
-            zone = zone.parent || fakeZone;
-        }
-        return zone.fork({ name: METEOR_RXJS_ZONE });
-    }
-    return fakeZone;
-}
-function getZone() {
-    if (g.Zone) {
-        var zone = g.Zone.current;
-        if (zone.name === METEOR_RXJS_ZONE) {
-            return zone.parent;
-        }
-        return zone;
-    }
-}
 function removeObserver(observers, observer, onEmpty) {
     var index = observers.indexOf(observer);
     observers.splice(index, 1);
@@ -54,7 +25,88 @@ function removeObserver(observers, observer, onEmpty) {
         onEmpty();
     }
 }
-var gZone = g.Zone ? g.Zone.current : fakeZone;
+
+var __extends$1 = (undefined && undefined.__extends) || function (d, b) {
+    for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+    function __() { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+};
+var METEOR_RXJS_ZONE = 'meteor-rxjs-zone';
+var fakeZone = {
+    name: METEOR_RXJS_ZONE,
+    parent: null,
+    run: function (func) {
+        return func();
+    },
+    fork: function (spec) {
+        return fakeZone;
+    },
+    get: function (key) {
+        return null;
+    }
+};
+function forkRxJsZone() {
+    var zone = getParentZone() || fakeZone;
+    return zone.fork({
+        name: METEOR_RXJS_ZONE,
+        properties: { 'isAngularZone': false },
+    });
+}
+function getParentZone(zone) {
+    zone = zone || (g.Zone && g.Zone.current);
+    if (zone && (zone.name === METEOR_RXJS_ZONE)) {
+        return zone.parent;
+    }
+    return zone;
+}
+var zoneRunners = new Map();
+function runZone(zone) {
+    if (!zoneRunners.get(zone)) {
+        var runner_1 = _.debounce(function (run) { return run(); }, 30);
+        zoneRunners.set(zone, runner_1);
+    }
+    var runner = zoneRunners.get(zone);
+    runner(zone.run.bind(zone, function () { }));
+}
+function zone(zone) {
+    return this.lift(new ZoneOperator(zone || getParentZone()));
+}
+var ZoneOperator = (function () {
+    function ZoneOperator(zone) {
+        this.zone = zone;
+    }
+    ZoneOperator.prototype.call = function (subscriber, source) {
+        return source._subscribe(new ZoneSubscriber(subscriber, this.zone));
+    };
+    return ZoneOperator;
+}());
+var ZoneSubscriber = (function (_super) {
+    __extends$1(ZoneSubscriber, _super);
+    function ZoneSubscriber(destination, zone) {
+        _super.call(this, destination);
+        this.zone = zone;
+    }
+    ZoneSubscriber.prototype._next = function (value) {
+        var _this = this;
+        var zone = getParentZone(this.zone);
+        this.zone.run(function () { return _this.destination.next(value); });
+        runZone(zone);
+    };
+    ZoneSubscriber.prototype._complete = function () {
+        var _this = this;
+        var zone = getParentZone(this.zone);
+        this.zone.run(function () { return _this.destination.complete(); });
+        runZone(zone);
+    };
+    ZoneSubscriber.prototype._error = function (err) {
+        var _this = this;
+        var zone = getParentZone(this.zone);
+        this.zone.run(function () { return _this.destination.error(err); });
+        runZone(zone);
+    };
+    return ZoneSubscriber;
+}(rxjs.Subscriber));
+rxjs.Observable.prototype.zone = zone;
 
 var __extends = (undefined && undefined.__extends) || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
@@ -69,8 +121,9 @@ var ObservableCursor = (function (_super) {
      * @param {Mongo.Cursor<T>} cursor - The Mongo.Cursor to wrap.
      */
     function ObservableCursor(cursor) {
-        var _this = _super.call(this, function (observer) {
-            if (_this._isDataInitinialized) {
+        var _this = this;
+        _super.call(this, function (observer) {
+            if (_this._init) {
                 observer.next(_this._data);
             }
             _this._observers.push(observer);
@@ -80,15 +133,18 @@ var ObservableCursor = (function (_super) {
             return function () {
                 removeObserver(_this._observers, observer, function () { return _this.stop(); });
             };
-        }) || this;
-        _this._data = [];
-        _this._observers = [];
-        _this._countObserver = new rxjs.Subject();
-        _this._isDataInitinialized = false;
-        _.extend(_this, _.omit(cursor, 'count', 'map'));
-        _this._cursor = cursor;
-        _this._zone = forkZone();
-        return _this;
+        });
+        this._zone = forkRxJsZone();
+        this._data = [];
+        this._observers = [];
+        this._countObserver = new rxjs.Subject();
+        this._init = false;
+        _.extend(this, _.omit(cursor, 'count', 'map'));
+        this._cursor = cursor;
+        this._handleChangeDebounced = _.debounce(function () {
+            _this._handleChange();
+            _this._init = true;
+        }, 0);
     }
     /**
      *  Static method which creates an ObservableCursor from Mongo.Cursor.
@@ -183,36 +239,51 @@ var ObservableCursor = (function (_super) {
         });
     };
     ObservableCursor.prototype._addedAt = function (doc, at, before) {
+        doc = this._zoneObservables(doc);
         this._data.splice(at, 0, doc);
+        if (!this._init) {
+            return this._handleChangeDebounced();
+        }
         this._handleChange();
     };
     ObservableCursor.prototype._changedAt = function (doc, old, at) {
         this._data[at] = doc;
         this._handleChange();
     };
-    
     ObservableCursor.prototype._removedAt = function (doc, at) {
         this._data.splice(at, 1);
         this._handleChange();
     };
-    
     ObservableCursor.prototype._movedTo = function (doc, fromIndex, toIndex) {
         this._data.splice(fromIndex, 1);
         this._data.splice(toIndex, 0, doc);
         this._handleChange();
     };
-    
     ObservableCursor.prototype._handleChange = function () {
-        var _this = this;
-        this._isDataInitinialized = true;
-        this._zone.run(function () {
-            _this._runNext(_this._data);
-        });
+        this._runNext(this._data);
     };
-    
+    ObservableCursor.prototype._zoneObservables = function (doc) {
+        if (!doc) {
+            return doc;
+        }
+        var proto = Object.getPrototypeOf(doc) || {};
+        var props = [].concat(Object.keys(doc), Object.keys(proto));
+        for (var _i = 0, props_1 = props; _i < props_1.length; _i++) {
+            var prop = props_1[_i];
+            var value = doc[prop];
+            if (value instanceof rxjs.Observable) {
+                Object.defineProperty(doc, prop, {
+                    configurable: true,
+                    enumerable: true,
+                    value: value.zone.call(value, this._zone),
+                });
+            }
+        }
+        return doc;
+    };
     ObservableCursor.prototype._observeCursor = function (cursor) {
         var _this = this;
-        return gZone.run(function () { return cursor.observe({
+        return this._zone.run(function () { return cursor.observe({
             addedAt: _this._addedAt.bind(_this),
             changedAt: _this._changedAt.bind(_this),
             movedTo: _this._movedTo.bind(_this),
@@ -525,11 +596,11 @@ var MeteorObservable = (function () {
         if (isMeteorCallbacks(lastParam)) {
             throwInvalidCallback('MeteorObservable.call');
         }
-        var zone = forkZone();
+        var zone$$1 = forkRxJsZone();
         return rxjs.Observable.create(function (observer) {
             Meteor.call.apply(Meteor, [name].concat(args.concat([
                 function (error, result) {
-                    zone.run(function () {
+                    zone$$1.run(function () {
                         error ? observer.error(error) :
                             observer.next(result);
                         observer.complete();
@@ -603,17 +674,17 @@ var MeteorObservable = (function () {
         if (isMeteorCallbacks(lastParam)) {
             throwInvalidCallback('MeteorObservable.subscribe');
         }
-        var zone = forkZone();
+        var zone$$1 = forkRxJsZone();
         var observers = [];
         var subscribe = function () {
             return Meteor.subscribe.apply(Meteor, [name].concat(args.concat([{
                     onError: function (error) {
-                        zone.run(function () {
+                        zone$$1.run(function () {
                             observers.forEach(function (observer) { return observer.error(error); });
                         });
                     },
                     onReady: function () {
-                        zone.run(function () {
+                        zone$$1.run(function () {
                             observers.forEach(function (observer) { return observer.next(); });
                         });
                     }
@@ -655,11 +726,11 @@ var MeteorObservable = (function () {
      *  }
      */
     MeteorObservable.autorun = function () {
-        var zone = forkZone();
+        var zone$$1 = forkRxJsZone();
         var observers = [];
         var autorun = function () {
             return Tracker.autorun(function (computation) {
-                zone.run(function () {
+                zone$$1.run(function () {
                     observers.forEach(function (observer) { return observer.next(computation); });
                 });
             });
@@ -679,55 +750,59 @@ var MeteorObservable = (function () {
     return MeteorObservable;
 }());
 
-var __extends$1 = (undefined && undefined.__extends) || function (d, b) {
+var __extends$2 = (undefined && undefined.__extends) || function (d, b) {
     for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
     function __() { this.constructor = d; }
     d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
 };
-function zone(zone) {
-    return this.lift(new ZoneOperator(zone || getZone()));
+function select(field) {
+    return this.lift(new SelectOperator(field));
 }
-var ZoneOperator = (function () {
-    function ZoneOperator(zone) {
-        this.zone = zone;
+var SelectOperator = (function () {
+    function SelectOperator(field) {
+        this.field = field;
     }
-    ZoneOperator.prototype.call = function (subscriber, source) {
-        return source._subscribe(new ZoneSubscriber(subscriber, this.zone));
+    SelectOperator.prototype.call = function (subscriber, source) {
+        return source._subscribe(new SelectSubscriber(subscriber, this.field));
     };
-    return ZoneOperator;
+    return SelectOperator;
 }());
-var ZoneSubscriber = (function (_super) {
-    __extends$1(ZoneSubscriber, _super);
-    function ZoneSubscriber(destination, zone) {
-        var _this = _super.call(this, destination) || this;
-        _this.zone = zone;
-        return _this;
+var SelectSubscriber = (function (_super) {
+    __extends$2(SelectSubscriber, _super);
+    function SelectSubscriber(destination, field) {
+        _super.call(this, destination);
+        this.field = field;
     }
-    ZoneSubscriber.prototype._next = function (value) {
+    SelectSubscriber.prototype._next = function (value) {
         var _this = this;
-        this.zone.run(function () {
-            _this.destination.next(value);
-        });
+        if (value && value instanceof Array) {
+            var doc = value[0];
+            if (doc && doc[this.field] instanceof Array) {
+                var reduced = value
+                    .map(function (doc) { return doc[_this.field]; })
+                    .reduce(function (result, fields) { return result.concat(fields); }, []);
+                return this.destination.next(reduced);
+            }
+            var result = value.map(function (doc) { return doc[_this.field]; });
+            return this.destination.next(result);
+        }
+        this.destination.next(value && value[this.field]);
     };
-    ZoneSubscriber.prototype._complete = function () {
-        var _this = this;
-        this.zone.run(function () {
-            _this.destination.complete();
-        });
+    SelectSubscriber.prototype._complete = function () {
+        this.destination.complete();
     };
-    ZoneSubscriber.prototype._error = function (err) {
-        var _this = this;
-        this.zone.run(function () {
-            _this.destination.error(err);
-        });
+    SelectSubscriber.prototype._error = function (err) {
+        this.destination.error(err);
     };
-    return ZoneSubscriber;
+    return SelectSubscriber;
 }(rxjs.Subscriber));
-rxjs.Observable.prototype.zone = zone;
+rxjs.Observable.prototype.select = select;
 
 exports.MeteorObservable = MeteorObservable;
 exports.ObservableCursor = ObservableCursor;
+exports.forkRxJsZone = forkRxJsZone;
 exports.zone = zone;
+exports.select = select;
 
 Object.defineProperty(exports, '__esModule', { value: true });
 

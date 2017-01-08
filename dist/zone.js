@@ -5,9 +5,46 @@ var __extends = (this && this.__extends) || function (d, b) {
     d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
 };
 import { Observable, Subscriber } from 'rxjs';
-import { getZone } from './utils';
+import { g } from './utils';
+var METEOR_RXJS_ZONE = 'meteor-rxjs-zone';
+var fakeZone = {
+    name: METEOR_RXJS_ZONE,
+    parent: null,
+    run: function (func) {
+        return func();
+    },
+    fork: function (spec) {
+        return fakeZone;
+    },
+    get: function (key) {
+        return null;
+    }
+};
+export function forkRxJsZone() {
+    var zone = getParentZone() || fakeZone;
+    return zone.fork({
+        name: METEOR_RXJS_ZONE,
+        properties: { 'isAngularZone': false },
+    });
+}
+function getParentZone(zone) {
+    zone = zone || (g.Zone && g.Zone.current);
+    if (zone && (zone.name === METEOR_RXJS_ZONE)) {
+        return zone.parent;
+    }
+    return zone;
+}
+var zoneRunners = new Map();
+function runZone(zone) {
+    if (!zoneRunners.get(zone)) {
+        var runner_1 = _.debounce(function (run) { return run(); }, 30);
+        zoneRunners.set(zone, runner_1);
+    }
+    var runner = zoneRunners.get(zone);
+    runner(zone.run.bind(zone, function () { }));
+}
 export function zone(zone) {
-    return this.lift(new ZoneOperator(zone || getZone()));
+    return this.lift(new ZoneOperator(zone || getParentZone()));
 }
 var ZoneOperator = (function () {
     function ZoneOperator(zone) {
@@ -21,27 +58,26 @@ var ZoneOperator = (function () {
 var ZoneSubscriber = (function (_super) {
     __extends(ZoneSubscriber, _super);
     function ZoneSubscriber(destination, zone) {
-        var _this = _super.call(this, destination) || this;
-        _this.zone = zone;
-        return _this;
+        _super.call(this, destination);
+        this.zone = zone;
     }
     ZoneSubscriber.prototype._next = function (value) {
         var _this = this;
-        this.zone.run(function () {
-            _this.destination.next(value);
-        });
+        var zone = getParentZone(this.zone);
+        this.zone.run(function () { return _this.destination.next(value); });
+        runZone(zone);
     };
     ZoneSubscriber.prototype._complete = function () {
         var _this = this;
-        this.zone.run(function () {
-            _this.destination.complete();
-        });
+        var zone = getParentZone(this.zone);
+        this.zone.run(function () { return _this.destination.complete(); });
+        runZone(zone);
     };
     ZoneSubscriber.prototype._error = function (err) {
         var _this = this;
-        this.zone.run(function () {
-            _this.destination.error(err);
-        });
+        var zone = getParentZone(this.zone);
+        this.zone.run(function () { return _this.destination.error(err); });
+        runZone(zone);
     };
     return ZoneSubscriber;
 }(Subscriber));
