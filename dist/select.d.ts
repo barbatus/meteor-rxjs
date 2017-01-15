@@ -1,10 +1,7 @@
 import { Observable } from 'rxjs';
-export declare function select<T, U>(field: string): Observable<U>;
-export interface SelectSignature<T> {
-    (field: string): Observable<T>;
-}
+export declare function select<T, U>(this: Observable<T>, field: string): Observable<U>;
 declare module 'rxjs/Observable' {
     interface Observable<T> {
-        select: SelectSignature<T>;
+        select<T, U>(this: Observable<T>, field: string): Observable<U>;
     }
 }

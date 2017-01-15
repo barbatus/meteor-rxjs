@@ -6,15 +6,15 @@ import {TeardownLogic} from 'rxjs/Subscription';
 
 declare const _;
 
-export function select<T, U>(field: string): Observable<U> {
-  return this.lift(new SelectOperator<T, U>(field));
+export function select<T, U>(this: Observable<T>, field: string): Observable<U> {
+  return this.lift(new SelectOperator(field));
 }
 
 class SelectOperator<T, U> implements Operator<T, U> {
   constructor(private field: string) {}
 
   call(subscriber: Subscriber<U>, source: any): TeardownLogic {
-    return source._subscribe(new SelectSubscriber(subscriber, this.field));
+    return source.subscribe(new SelectSubscriber(subscriber, this.field));
   }
 }
 
@@ -26,10 +26,10 @@ class SelectSubscriber<T, U> extends Subscriber<T> {
 
   protected _next(value: T) {
     if (value && value instanceof Array) {
-      const doc = value[0];
-      if (doc && doc[this.field] instanceof Array) {
+      const value0 = value[0];
+      if (value0 && value0[this.field] instanceof Array) {
         const reduced = value
-          .map(doc => doc[this.field])
+          .map(docs => docs[this.field])
           .reduce((result, fields) => result.concat(fields), []);
         return this.destination.next(reduced);
       }
@@ -48,14 +48,10 @@ class SelectSubscriber<T, U> extends Subscriber<T> {
   }
 }
 
-export interface SelectSignature<T> {
-  (field: string): Observable<T>;
-}
-
 Observable.prototype.select = select;
 
 declare module 'rxjs/Observable' {
   interface Observable<T> {
-    select: SelectSignature<T>;
+    select<T, U>(this: Observable<T>, field: string): Observable<U>;
   }
 }

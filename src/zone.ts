@@ -58,7 +58,7 @@ class ZoneOperator<T> implements Operator<T, T> {
   constructor(private zone: Zone) {}
 
   call(subscriber: Subscriber<T>, source: any): TeardownLogic {
-    return source._subscribe(new ZoneSubscriber(subscriber, this.zone));
+    return source.subscribe(new ZoneSubscriber(subscriber, this.zone));
   }
 }
 

@@ -1,5 +1,4 @@
 /// <reference types="meteor-typings" />
-/// <reference types="@types/chai" />
 import { Observable } from 'rxjs';
 export declare class ObservableCursor<T> extends Observable<T[]> {
     private _zone;

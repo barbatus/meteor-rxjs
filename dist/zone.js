@@ -51,19 +51,21 @@ var ZoneOperator = (function () {
         this.zone = zone;
     }
     ZoneOperator.prototype.call = function (subscriber, source) {
-        return source._subscribe(new ZoneSubscriber(subscriber, this.zone));
+        return source.subscribe(new ZoneSubscriber(subscriber, this.zone));
     };
     return ZoneOperator;
 }());
 var ZoneSubscriber = (function (_super) {
     __extends(ZoneSubscriber, _super);
     function ZoneSubscriber(destination, zone) {
-        _super.call(this, destination);
-        this.zone = zone;
+        var _this = _super.call(this, destination) || this;
+        _this.zone = zone;
+        return _this;
     }
     ZoneSubscriber.prototype._next = function (value) {
         var _this = this;
         var zone = getParentZone(this.zone);
+        console.log(value);
         this.zone.run(function () { return _this.destination.next(value); });
         runZone(zone);
     };

@@ -76,19 +76,21 @@ var ZoneOperator = (function () {
         this.zone = zone;
     }
     ZoneOperator.prototype.call = function (subscriber, source) {
-        return source._subscribe(new ZoneSubscriber(subscriber, this.zone));
+        return source.subscribe(new ZoneSubscriber(subscriber, this.zone));
     };
     return ZoneOperator;
 }());
 var ZoneSubscriber = (function (_super) {
     __extends$1(ZoneSubscriber, _super);
     function ZoneSubscriber(destination, zone) {
-        _super.call(this, destination);
-        this.zone = zone;
+        var _this = _super.call(this, destination) || this;
+        _this.zone = zone;
+        return _this;
     }
     ZoneSubscriber.prototype._next = function (value) {
         var _this = this;
         var zone = getParentZone(this.zone);
+        console.log(value);
         this.zone.run(function () { return _this.destination.next(value); });
         runZone(zone);
     };
@@ -121,8 +123,7 @@ var ObservableCursor = (function (_super) {
      * @param {Mongo.Cursor<T>} cursor - The Mongo.Cursor to wrap.
      */
     function ObservableCursor(cursor) {
-        var _this = this;
-        _super.call(this, function (observer) {
+        var _this = _super.call(this, function (observer) {
             if (_this._init) {
                 observer.next(_this._data);
             }
@@ -133,18 +134,19 @@ var ObservableCursor = (function (_super) {
             return function () {
                 removeObserver(_this._observers, observer, function () { return _this.stop(); });
             };
-        });
-        this._zone = forkRxJsZone();
-        this._data = [];
-        this._observers = [];
-        this._countObserver = new rxjs.Subject();
-        this._init = false;
-        _.extend(this, _.omit(cursor, 'count', 'map'));
-        this._cursor = cursor;
-        this._handleChangeDebounced = _.debounce(function () {
+        }) || this;
+        _this._zone = forkRxJsZone();
+        _this._data = [];
+        _this._observers = [];
+        _this._countObserver = new rxjs.Subject();
+        _this._init = false;
+        _.extend(_this, _.omit(cursor, 'count', 'map'));
+        _this._cursor = cursor;
+        _this._handleChangeDebounced = _.debounce(function () {
             _this._handleChange();
             _this._init = true;
         }, 0);
+        return _this;
     }
     /**
      *  Static method which creates an ObservableCursor from Mongo.Cursor.
@@ -763,23 +765,24 @@ var SelectOperator = (function () {
         this.field = field;
     }
     SelectOperator.prototype.call = function (subscriber, source) {
-        return source._subscribe(new SelectSubscriber(subscriber, this.field));
+        return source.subscribe(new SelectSubscriber(subscriber, this.field));
     };
     return SelectOperator;
 }());
 var SelectSubscriber = (function (_super) {
     __extends$2(SelectSubscriber, _super);
     function SelectSubscriber(destination, field) {
-        _super.call(this, destination);
-        this.field = field;
+        var _this = _super.call(this, destination) || this;
+        _this.field = field;
+        return _this;
     }
     SelectSubscriber.prototype._next = function (value) {
         var _this = this;
         if (value && value instanceof Array) {
-            var doc = value[0];
-            if (doc && doc[this.field] instanceof Array) {
+            var value0 = value[0];
+            if (value0 && value0[this.field] instanceof Array) {
                 var reduced = value
-                    .map(function (doc) { return doc[_this.field]; })
+                    .map(function (docs) { return docs[_this.field]; })
                     .reduce(function (result, fields) { return result.concat(fields); }, []);
                 return this.destination.next(reduced);
             }

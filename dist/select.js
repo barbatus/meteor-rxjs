@@ -13,23 +13,24 @@ var SelectOperator = (function () {
         this.field = field;
     }
     SelectOperator.prototype.call = function (subscriber, source) {
-        return source._subscribe(new SelectSubscriber(subscriber, this.field));
+        return source.subscribe(new SelectSubscriber(subscriber, this.field));
     };
     return SelectOperator;
 }());
 var SelectSubscriber = (function (_super) {
     __extends(SelectSubscriber, _super);
     function SelectSubscriber(destination, field) {
-        _super.call(this, destination);
-        this.field = field;
+        var _this = _super.call(this, destination) || this;
+        _this.field = field;
+        return _this;
     }
     SelectSubscriber.prototype._next = function (value) {
         var _this = this;
         if (value && value instanceof Array) {
-            var doc = value[0];
-            if (doc && doc[this.field] instanceof Array) {
+            var value0 = value[0];
+            if (value0 && value0[this.field] instanceof Array) {
                 var reduced = value
-                    .map(function (doc) { return doc[_this.field]; })
+                    .map(function (docs) { return docs[_this.field]; })
                     .reduce(function (result, fields) { return result.concat(fields); }, []);
                 return this.destination.next(reduced);
             }
